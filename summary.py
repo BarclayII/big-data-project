@@ -1,7 +1,9 @@
 
 import re
 from pyspark.sql import Row
-from utils import read_hdfs_csv, init_spark
+from pyspark.sql.functions import lit
+from util import read_hdfs_csv, init_spark
+import datetime
 
 def fullmatch(regex, s):
     return re.match(regex + '\\Z', s)
@@ -62,18 +64,13 @@ def assign_type(df):
             .reduce(lambda a, b: [x and y for x, y in zip(a, b)])
             )
 
-    def mapper(row,
-               cols=cols,
-               dtypes=dtypes,
-               dtypes_dict=dtypes_dict,
-               isdatetime=isdatetime):
-        dic = row.asDict()
-        for i, c in enumerate(cols):
-            dic['%s_dtype' % c] = ('DATETIME' if isdatetime[i] 
-                                  else dtypes_dict[dtypes[c]])
-        return Row(**dic)
+    # TODO: I'm not sure if I should set KY_CD and PD_CD as INT or TEXT.
+    # Technically it should be TEXT, but it can also be INT.
+    for i, c in enumerate(cols):
+        s = 'DATETIME' if isdatetime[i] else dtypes_dict[dtypes[c]]
+        df = df.withColumn(c + '_dtype', lit(s))
 
-    return df.map(mapper)
+    return df
 
 
 if __name__ == '__main__':
