@@ -127,13 +127,32 @@ if __name__ == '__main__':
     for k, descs in ky_descs:
         descs_not_null = [d for d in descs if not isnull(d)]
         if len(descs_not_null) < len(descs):
-            null_desc_id = (rows
-                            .select('CMPLNT_NUM', 'KY_CD', 'OFNS_DESC')
-                            .where((rows['KY_CD'] == k) & (rows['OFNS_DESC'] == ''))
-                            .map(lambda r: r['CMPLNT_NUM'])
-                            .collect())
-            print ('Key code %03d has empty description at %s' %
-                   (k, null_desc_id))
+            num = (rows
+                   .select('CMPLNT_NUM', 'KY_CD', 'OFNS_DESC')
+                   .where((rows['KY_CD'] == k) & (rows['OFNS_DESC'] == ''))
+                   .count())
+            print 'Key code %03d has empty description in %d records' % (k, num)
         if len(descs_not_null) > 1:
             print ('Key code %03d has multiple descriptions: %s' %
                    (k, descs_not_null))
+
+    # (d) Make sure the mapping between (KY_CD, PD_CD) and PD_DESC are
+    # one-to-one
+    pd_descs = (rows
+                .select('KY_CD', 'PD_CD', 'PD_DESC')
+                .distinct()
+                .map(lambda r: ((r['KY_CD'], r['PD_CD']), [r['PD_DESC']]))
+                .reduceByKey(lambda a, b: a + b)
+                .collect())
+    for k, descs in pd_descs:
+        if len(descs) > 1:
+            print '%s has multiple descriptions: %s' % (k, descs)
+        elif k[1] is None:
+            num = (rows
+                   .select('CMPLNT_NUM', 'KY_CD', 'PD_CD')
+                   .where(rows['PD_CD'].isNull())
+                   .count())
+            print ('%d records found with key code %03d and no internal code' %
+                   (num, k[0]))
+        elif descs[0] == '':
+            print '%s has empty description' % k
