@@ -115,3 +115,25 @@ if __name__ == '__main__':
     inconsistent_date_count = inconsistent_date.count()
     if inconsistent_date_count > 0:
         print 'Number of inconsistent dates:', inconsistent_date_count
+
+    # (c) Make sure the mapping between codes and descriptions are one-to-one
+    # (Namely KY_CD and OFNS_DESC).
+    ky_descs = (rows
+                .select('KY_CD', 'OFNS_DESC')
+                .distinct()
+                .map(lambda r: (r['KY_CD'], [r['OFNS_DESC']]))
+                .reduceByKey(lambda a, b: a + b)
+                .collect())
+    for k, descs in ky_descs:
+        descs_not_null = [d for d in descs if not isnull(d)]
+        if len(descs_not_null) < len(descs):
+            null_desc_id = (rows
+                            .select('CMPLNT_NUM', 'KY_CD', 'OFNS_DESC')
+                            .where((rows['KY_CD'] == k) & (rows['OFNS_DESC'] == ''))
+                            .map(lambda r: r['CMPLNT_NUM'])
+                            .collect())
+            print ('Key code %03d has empty description at %s' %
+                   (k, null_desc_id))
+        if len(descs_not_null) > 1:
+            print ('Key code %03d has multiple descriptions: %s' %
+                   (k, descs_not_null))
