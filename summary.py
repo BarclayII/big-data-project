@@ -15,7 +15,7 @@ def isnull(x):
             (isinstance(x, str) and x.isspace())    # Whitespace string
             )
 
-def isdate(x):
+def date_from_string(x):
     try:
         # The date info is pretty clean since it is always in MM/DD/YYYY form.
         # We leave the job of determining whether it is a valid date to
@@ -25,22 +25,41 @@ def isdate(x):
         # (3) datetime.date() requires the integers to form a valid date.
         month, day, year = x.split('/')
         date = datetime.date(int(year), int(month), int(day))
-        return True
+        return date
     except:         # TODO finer exceptions
-        return False
+        return None
 
-def istime(x):
+def isdate(x):
+    return date_from_string(x) is not None
+
+def time_from_string(x):
     try:
         # Same logic as isdate()
         # A caveat is that 24:00:00 is also a valid time string so we treat it
         # separately
         hour, minute, second = [int(_) for _ in x.split(':')]
         if (hour == 24) and (minute == 0) and (second == 0):
-            return True
+            return datetime.time(0, 0, 0)
         time = datetime.time(hour, minute, second)
-        return True
+        return time
     except:         # TODO finer exceptions
-        return False
+        return None
+
+def istime(x):
+    return time_from_string(x) is not None
+
+def datetime_from_string(date_str, time_str):
+    try:
+        month, day, year = [int(_) for _ in date_str.split('/')]
+        hour, minute, second = [int(_) for _ in time_str.split(':')]
+        date = datetime.date(year, month, day)
+        if (hour == 24) and (minute == 0) and (second == 0):
+            hour = 0
+            date += datetime.timedelta(1)
+        return datetime.datetime(date.year, date.month, date.day,
+                                 hour, minute, second)
+    except:
+        return None
 
 def assign_type(df):
     '''
@@ -72,10 +91,27 @@ def assign_type(df):
 
     return df
 
+def check_date_consistency(r):
+    # TODO
+    return False
 
 if __name__ == '__main__':
     sc, sqlContext = init_spark(verbose_logging=True)
 
-    rows = read_hdfs_csv(sqlContext, 'rows.csv')        # Change to your filename
+    rows = read_hdfs_csv(sqlContext, 'rows.csv')    # Change to your filename
 
+    # (1) Assign data type for each row
     rows = assign_type(rows)
+
+    # Inconsistency checks:
+    # (a) Make sure the IDs are unique:
+    if rows.select('CMPLNT_NUM').distinct().count != rows.count():
+        # In practice we should print out which ID is not unique, but here we
+        # have a very friendly dataset and this block never gets run.
+        print 'The ID\'s are not unique'
+
+    # (b) Make sure the TO_ date/time is after FR_ date/time
+    inconsistent_date = rows.filter(check_date_consistency)
+    inconsistent_date_count = inconsistent_date.count()
+    if inconsistent_date_count > 0:
+        print 'Number of inconsistent dates:', inconsistent_date_count
