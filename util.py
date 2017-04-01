@@ -1,3 +1,7 @@
+'''
+Requires spark-csv to run
+$ pyspark --packages com.databricks:spark-csv_2.11:1.5.0
+'''
 from pyspark import SparkContext
 from pyspark.storagelevel import StorageLevel
 from pyspark.sql import HiveContext
