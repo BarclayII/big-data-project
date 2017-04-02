@@ -31,7 +31,7 @@ def read_hdfs_csv(sqlContext, filename, header='true', sep=','):
             )
     return csvreader.load(filename)
 
-def write_hdfs_csv(df, filename, compress=None):
+def write_hdfs_csv(df, filename, compress=None, overwrite=False):
     '''
     Parameters:
         compress: bool
@@ -44,4 +44,6 @@ def write_hdfs_csv(df, filename, compress=None):
             )
     if compress:
         csvwriter = csvwriter.options(codec='gzip')
+    if overwrite:
+        csvwriter = csvwriter.options(mode='overwrite')
     csvwriter.save(filename)
