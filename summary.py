@@ -97,6 +97,7 @@ def check_date_consistency(r):
 
 if __name__ == '__main__':
     sc, sqlContext = init_spark(verbose_logging=True)
+    sc.addPyFile('util.py')
 
     rows = read_hdfs_csv(sqlContext, 'rows.csv')    # Change to your filename
 
@@ -105,13 +106,13 @@ if __name__ == '__main__':
 
     # Inconsistency checks:
     # (a) Make sure the IDs are unique:
-    if rows.select('CMPLNT_NUM').distinct().count != rows.count():
+    if rows.select('CMPLNT_NUM').distinct().count() != rows.count():
         # In practice we should print out which ID is not unique, but here we
         # have a very friendly dataset and this block never gets run.
         print 'The ID\'s are not unique'
 
     # (b) Make sure the TO_ date/time is after FR_ date/time
-    inconsistent_date = rows.filter(check_date_consistency)
+    inconsistent_date = rows.rdd.filter(check_date_consistency)
     inconsistent_date_count = inconsistent_date.count()
     if inconsistent_date_count > 0:
         print 'Number of inconsistent dates:', inconsistent_date_count
