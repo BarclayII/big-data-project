@@ -95,14 +95,51 @@ def check_date_consistency(r):
     # TODO
     return False
 
+# The semantics are assigned by manual inspection - because the columns are
+# very clean, and does not have several types of inputs mixed together.
+semantics = {
+        "CMPLNT_NUM": "ID",
+        "CMPLNT_FR_DT": "date",
+        "CMPLNT_FR_TM": "time",
+        "CMPLNT_TO_DT": "date",
+        "CMPLNT_TO_TM": "time",
+        "RPT_DT": "date",
+        "KY_CD": "categorical (code)",
+        "OFNS_DESC": "description",
+        "PD_CD": "categorical (code)",
+        "PD_DESC": "description",
+        "CRM_ATPT_CPTD_CD": "categorical",
+        "LAW_CAT_CD": "categorical",
+        "JURIS_DESC": "categorical (department)",
+        "BORO_NM": "categorical (borough location)",
+        "ADDR_PCT_CD": "categorical (precinct number)",
+        "LOC_OF_OCCUR_DESC":
+            "categorical (inside/outside/rear of/opposite of/front of)",
+        "PREM_TYP_DESC": "categorical (premise)",
+        "PARKS_NM": "categorical (park name)",
+        "HADEVELOPT": "categorical (housing development)",
+        "X_COORD_CD": "New York Long Island SPCS X-coordinate",
+        "Y_COORD_CD": "New York Long Island SPCS Y-coordinate",
+        "Latitude": "Latitude",
+        "Longitude": "Longitude",
+        "Lat_Lon": "Latitude and Longitude",
+        }
+
 if __name__ == '__main__':
     sc, sqlContext = init_spark(verbose_logging=True)
     sc.addPyFile('util.py')
 
     rows = read_hdfs_csv(sqlContext, 'rows.csv')    # Change to your filename
+    cols = rows.columns
 
-    # (1) Assign data type for each row
+    # (1) Assign data type for each column
     rows = assign_type(rows)
+    print rows.take(5)
+
+    # (2) Assign semantics for each column
+    for c in cols:
+        rows = rows.withColumn(c + '_sem', lit(semantics[c]))
+    print rows.take(5)
 
     # Inconsistency checks:
     # (a) Make sure the IDs are unique:
