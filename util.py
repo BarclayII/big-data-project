@@ -44,6 +44,4 @@ def write_hdfs_csv(df, filename, compress=None, overwrite=False):
             )
     if compress:
         csvwriter = csvwriter.options(codec='gzip')
-    if overwrite:
-        csvwriter = csvwriter.options(mode='overwrite')
     csvwriter.save(filename)

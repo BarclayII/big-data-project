@@ -1,7 +1,8 @@
 
 import re
 from pyspark.sql import Row
-from pyspark.sql.functions import lit
+from pyspark.sql.functions import lit, udf
+from pyspark.sql.types import StringType
 from util import read_hdfs_csv, init_spark
 import datetime
 
@@ -126,7 +127,7 @@ semantics = {
         }
 
 if __name__ == '__main__':
-    sc, sqlContext = init_spark(verbose_logging=True)
+    sc, sqlContext = init_spark(verbose_logging='WARN')
     sc.addPyFile('util.py')
 
     rows = read_hdfs_csv(sqlContext, 'rows.csv')    # Change to your filename
@@ -134,12 +135,10 @@ if __name__ == '__main__':
 
     # (1) Assign data type for each column
     rows = assign_type(rows)
-    print rows.take(5)
 
     # (2) Assign semantics for each column
     for c in cols:
         rows = rows.withColumn(c + '_sem', lit(semantics[c]))
-    print rows.take(5)
 
     # Inconsistency checks:
     # (a) Make sure the IDs are unique:
@@ -147,6 +146,8 @@ if __name__ == '__main__':
         # In practice we should print out which ID is not unique, but here we
         # have a very friendly dataset and this block never gets run.
         print 'The ID\'s are not unique'
+    # Mark it valid
+    rows = rows.withColumn('CMPLNT_NUM_valid', lit('VALID'))
 
     # (b) Make sure the TO_ date/time is after FR_ date/time
     inconsistent_date = rows.rdd.filter(check_date_consistency)
@@ -166,13 +167,18 @@ if __name__ == '__main__':
         descs_not_null = [d for d in descs if not isnull(d)]
         if len(descs_not_null) < len(descs):
             num = (rows
-                   .select('CMPLNT_NUM', 'KY_CD', 'OFNS_DESC')
                    .where((rows['KY_CD'] == k) & (rows['OFNS_DESC'] == ''))
                    .count())
-            print 'Key code %03d has empty description in %d records' % (k, num)
+            num_total = rows.where(rows['KY_CD'] == k).count()
+            print ('Key code %03d has empty description in %d records out of %d' %
+                    (k, num, num_total))
         if len(descs_not_null) > 1:
             print ('Key code %03d has multiple descriptions: %s' %
                    (k, descs_not_null))
+
+    fill_null = udf(lambda s: 'NULL' if s == '' else 'VALID', StringType())
+    rows = rows.withColumn('KY_CD', lit('VALID'))
+    rows = rows.withColumn('OFNS_DESC_valid', fill_null(rows.OFNS_DESC))
 
     # (d) Make sure the mapping between (KY_CD, PD_CD) and PD_DESC are
     # one-to-one
@@ -187,10 +193,19 @@ if __name__ == '__main__':
             print '%s has multiple descriptions: %s' % (k, descs)
         elif k[1] is None:
             num = (rows
-                   .select('CMPLNT_NUM', 'KY_CD', 'PD_CD')
                    .where(rows['PD_CD'].isNull())
                    .count())
             print ('%d records found with key code %03d and no internal code' %
                    (num, k[0]))
         elif descs[0] == '':
             print '%s has empty description' % k
+
+    # (e) Count the number of NULL values in different categorical variables
+    for col in ['CRM_ATPT_CPTD_CD', 'LAW_CAT_CD', 'JURIS_DESC']:
+        num = rows.where(rows[col].isNull()).count()
+        if num > 0:
+            print 'Column %s has %d empty values' % (col, num)
+        distincts = rows.select(col).where(rows[col].isNotNull() & rows[col] != '').distinct().collect()
+        print 'Column %s has distinct values %s' % (col, [d[col] for d in distincts])
+
+    write_hdfs_csv(rows, 'rows-new.csv')
