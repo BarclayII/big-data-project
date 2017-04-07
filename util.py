@@ -1,6 +1,8 @@
 '''
 Requires spark-csv to run
 $ pyspark --packages com.databricks:spark-csv_2.11:1.5.0
+
+NOTE: spark-csv 2.11 seems *broken* on dumbo.  Make sure you are using 2.10
 '''
 from pyspark import SparkContext
 from pyspark.storagelevel import StorageLevel
