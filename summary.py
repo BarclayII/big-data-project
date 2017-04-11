@@ -3,7 +3,7 @@ import re
 from pyspark.sql import Row
 from pyspark.sql.functions import lit, udf
 from pyspark.sql.types import StringType
-from util import read_hdfs_csv, init_spark
+from util import read_hdfs_csv, init_spark, write_hdfs_csv
 import datetime
 
 def fullmatch(regex, s):
@@ -177,7 +177,7 @@ if __name__ == '__main__':
                    (k, descs_not_null))
 
     fill_null = udf(lambda s: 'NULL' if s == '' else 'VALID', StringType())
-    rows = rows.withColumn('KY_CD', lit('VALID'))
+    rows = rows.withColumn('KY_CD_valid', lit('VALID'))
     rows = rows.withColumn('OFNS_DESC_valid', fill_null(rows.OFNS_DESC))
 
     # (d) Make sure the mapping between (KY_CD, PD_CD) and PD_DESC are
@@ -195,6 +195,7 @@ if __name__ == '__main__':
             num = (rows
                    .where(rows['PD_CD'].isNull())
                    .count())
+            print type(k[0]), type(k[1]), k
             print ('%d records found with key code %03d and no internal code' %
                    (num, k[0]))
         elif descs[0] == '':
@@ -205,7 +206,7 @@ if __name__ == '__main__':
         num = rows.where(rows[col].isNull()).count()
         if num > 0:
             print 'Column %s has %d empty values' % (col, num)
-        distincts = rows.select(col).where(rows[col].isNotNull() & rows[col] != '').distinct().collect()
+        distincts = rows.select(col).where(rows[col].isNotNull() & (rows[col] != '')).distinct().collect()
         print 'Column %s has distinct values %s' % (col, [d[col] for d in distincts])
 
     write_hdfs_csv(rows, 'rows-new.csv')
