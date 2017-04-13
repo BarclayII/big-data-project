@@ -25,11 +25,11 @@ def init_spark(verbose_logging=False, show_progress=False):
                 )
     return sc, sqlContext
 
-def read_hdfs_csv(sqlContext, filename, header='true', sep=','):
+def read_hdfs_csv(sqlContext, filename, header='true', sep=',', inferschema=False):
     csvreader = (sqlContext
             .read
             .format('com.databricks.spark.csv')
-            .options(header=header, inferschema='true', separator=sep)
+            .options(header=header, inferschema=inferschema, separator=sep)
             )
     return csvreader.load(filename)
 
