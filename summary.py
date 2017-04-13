@@ -104,10 +104,20 @@ def check_date_consistency(r):
     # TODO
     return False
 
-def in_precinct(lat, long_, prec_id, prec_dict):
+def fix_polygon(poly_data, poly_key):
+    for i, feat in enumerate(poly_data['features']):
+        for j, coords in enumerate(feat['geometry']['coordinates']):
+            if len(coords) == 1:
+                coords.append([])
+    poly = {poly_key(feat['properties']):
+            GEO.MultiPolygon(feat['geometry']['coordinates'])
+            for feat in poly_data['features']}
+    return poly
+
+def in_polygon(lat, long_, poly_id, poly_dict):
     lat = tryfloat(lat)
     long_ = tryfloat(long_)
-    prec = prec_dict.get(prec_id, None)
+    poly = poly_dict.get(poly_id, None)
 
     if (lat is None) and (long_ is None):
         point_null = True
@@ -116,27 +126,27 @@ def in_precinct(lat, long_, prec_id, prec_dict):
     else:
         point_null = False
 
-    if isnull(prec_id):
-        prec_valid = 'NULL'
-        prec_null = True
+    if isnull(poly_id):
+        poly_valid = 'NULL'
+        poly_null = True
     else:
-        prec_null = False
+        poly_null = False
         if point_null:
-            if prec_id in prec_dict:
-                prec_valid = 'VALID'
+            if poly_id in poly_dict:
+                poly_valid = 'VALID'
             else:
-                prec_valid = 'INVALID'
+                poly_valid = 'INVALID'
 
-    if prec_null or point_null:
-        return prec_valid
+    if poly_null or point_null:
+        return poly_valid
 
     point = GEO.Point(long_, lat)
-    poly = prec_dict[prec_id]
+    poly = poly_dict[poly_id]
     if poly.contains(point):
-        prec_valid = 'VALID'
+        poly_valid = 'VALID'
     else:
-        prec_valid = 'CONFLICT'
-    return prec_valid
+        poly_valid = 'CONFLICT'
+    return poly_valid
 
 # The semantics are assigned by manual inspection - because the columns are
 # very clean, and does not have several types of inputs mixed together.
@@ -171,7 +181,7 @@ semantics = {
 dbname = 'rows.csv'     # Change to your file name
 
 if __name__ == '__main__':
-    sc, sqlContext = init_spark(verbose_logging='WARN')
+    sc, sqlContext = init_spark(verbose_logging='INFO')
     sc.addPyFile('util.py')
 
     udf_isnull = udf(isnull, BooleanType())
@@ -278,18 +288,12 @@ if __name__ == '__main__':
             rows.where(udf_isnull(rows.ADDR_PCT_CD)).count()
             )
 
-    for i, feat in enumerate(prec_data['features']):
-        for j, coords in enumerate(feat['geometry']['coordinates']):
-            if len(coords) == 1:
-                coords.append([])
-    prec = {feat['properties']['precinct']:
-            GEO.MultiPolygon(feat['geometry']['coordinates'])
-            for feat in prec_data['features']}
+    prec = fix_polygon(prec_data, lambda prop: prop['precinct'])
 
     rows_in_prec = rows.map(
             lambda r: Row(
                 CMPLNT_NUM=r.CMPLNT_NUM,
-                ADDR_PCT_CD_valid=in_precinct(
+                ADDR_PCT_CD_valid=in_polygon(
                     r.Latitude, r.Longitude, r.ADDR_PCT_CD, prec
                     )
                 )
@@ -306,6 +310,31 @@ if __name__ == '__main__':
             )
     print '%d records has precincts conflicting the latitude/longitude' % (
             rows.where(rows.ADDR_PCT_CD_valid == 'CONFLICT').count()
+            )
+
+    # (g) Check if the boroughs are valid
+    with open('Borough Boundaries.geojson') as f:
+        boro_data = json.load(f)
+
+    boro = fix_polygon(boro_data, lambda prop: prop['boro_name'].upper())
+
+    rows_in_boro = rows.map(
+            lambda r: Row(
+                CMPLNT_NUM=r.CMPLNT_NUM,
+                BORO_NM_valid=in_polygon(
+                    r.Latitude, r.Longitude, r.BORO_NM, boro
+                    )
+                )
+            ).toDF()
+
+    print rows_in_boro.take(5)
+    rows = rows.join(rows_in_boro, on='CMPLNT_NUM')
+
+    print '%d records does not have borough recorded.' % (
+            rows.where(rows.BORO_NM_valid == 'NULL').count()
+            )
+    print '%d records has borough conflicting the latitude/longitude' % (
+            rows.where(rows.BORO_NM_valid == 'CONFLICT').count()
             )
 
     print rows.first()
