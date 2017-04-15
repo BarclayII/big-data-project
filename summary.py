@@ -7,6 +7,7 @@ from util import read_hdfs_csv, init_spark, write_hdfs_csv
 import datetime
 import json
 import shapely.geometry as GEO
+import pyproj
 
 def tryfloat(s):
     try:
@@ -16,6 +17,9 @@ def tryfloat(s):
 
 def fullmatch(regex, s):
     return re.match(regex + '\\Z', s)
+
+def ft2m(ft):
+    return ft * 0.3048006096012192
 
 def isnull(x):
     return (
@@ -336,6 +340,39 @@ if __name__ == '__main__':
     print '%d records has borough conflicting the latitude/longitude' % (
             rows.where(rows.BORO_NM_valid == 'CONFLICT').count()
             )
+
+    # (h) Check consistency of different coordinate systems
+    NAD83 = pyproj.Proj('''
+        +proj=lcc +lat_1=41.03333333333333 +lat_2=40.66666666666666
+        +lat_0=40.16666666666666 +lon_0=-74 +x_0=300000 +y_0=0
+        +ellps=GRS80 +datum=NAD83 +units=m +no_defs
+        ''')
+    rows_coord = rows.map(
+            lambda r:
+            (
+                (
+                    (float(r.Longitude), float(r.Latitude))
+                    if not (isnull(r.Longitude) or isnull(r.Latitude))
+                    else (None, None)
+                ),(
+                    NAD83(
+                        ft2m(int(r.X_COORD_CD)),
+                        ft2m(int(r.Y_COORD_CD)),
+                        inverse=True
+                        )
+                    if not (isnull(r.X_COORD_CD) or isnull(r.Y_COORD_CD))
+                    else (None, None)
+                )
+            )
+            )
+    rows_coord_diff = rows_coord.map(
+            lambda r: ((r[0][0] - r[1][0]) ** 2 + (r[0][1] - r[1][1]) ** 2
+                if not (isnull(r[0][0]) or isnull(r[1][0]) or
+                    isnull(r[0][1]) or isnull(r[1][1]))
+                else None)
+            )
+    print rows_coord_diff.filter(lambda x: (x is not None) and (x > 0.01)).count()
+    print rows_coord_diff.filter(lambda x: x is None).count()
 
     print rows.first()
     write_hdfs_csv(rows, 'rows-new.csv')
