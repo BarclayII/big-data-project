@@ -25,6 +25,7 @@ def isnull(x):
     return (
             x is None or                            # None
             (x == '') or                            # Empty string
+            x.isspace() or                          # Whitespace
             (isinstance(x, str) and x.isspace())    # Whitespace string
             )
 
@@ -348,6 +349,10 @@ def handle_juris_desc(df, df_infer):
     df = assign_types_for_column(df, df_infer, 'JURIS_DESC')
     return handle_null_or_valid(df, 'JURIS_DESC')
 
+# I have to handle the columns "Latitude", "Longitude" and "Lat_Lon" together,
+# as handling each individually does not make sense: if a record has Longitude
+# recorded but Latitude not recorded, then both Latitude and Longitude should
+# be marked as "INVALID" rather than "NULL" for one and "VALID" for the other.
 def handle_latlong(df, df_infer):
     def _valid(r):
         if isnull(r.Latitude) and isnull(r.Longitude):
@@ -358,10 +363,27 @@ def handle_latlong(df, df_infer):
             result = 'INVALID'
         else:
             result = 'VALID'
-        return Row(CMPLNT_NUM=r.CMPLNT_NUM, Latitude_valid=result, Longitude_valid=result)
+
+        if isnull(r.Lat_Lon):
+            latlon_result = 'NULL'
+        elif isnull(r.Latitude) or isnull(r.Longitude):
+            latlon_result = 'INVALID'
+        elif tryfloat(r.Latitude) is None or tryfloat(r.Longitude) is None:
+            latlon_result = 'INVALID'
+        elif r.Lat_Lon == '(%s, %s)' % (r.Latitude, r.Longitude):
+            latlon_result = 'VALID'
+        else:
+            latlon_result = 'INVALID'
+        return Row(
+                CMPLNT_NUM=r.CMPLNT_NUM,
+                Latitude_valid=result,
+                Longitude_valid=result,
+                Lat_Lon_valid=latlon_result
+                )
 
     df = assign_types_for_column(df, df_infer, 'Latitude')
     df = assign_types_for_column(df, df_infer, 'Longitude')
+    df = assign_types_for_column(df, df_infer, 'Lat_Lon')
     df_valid = df.map(_valid).toDF()
     return df.join(df_valid, on='CMPLNT_NUM')
 
@@ -426,6 +448,22 @@ def handle_boro_nm(df, df_infer):
     assert df.count() == _old_count
 
     return df
+
+def handle_loc_of_occur_desc(df, df_infer):
+    df = assign_types_for_column(df, df_infer, 'LOC_OF_OCCUR_DESC')
+    return handle_null_or_valid(df, 'LOC_OF_OCCUR_DESC')
+
+def handle_prem_typ_desc(df, df_infer):
+    df = assign_types_for_column(df, df_infer, 'PREM_TYP_DESC')
+    return handle_null_or_valid(df, 'PREM_TYP_DESC')
+
+def handle_parks_nm(df, df_infer):
+    df = assign_types_for_column(df, df_infer, 'PARKS_NM')
+    return handle_null_or_valid(df, 'PARKS_NM')
+
+def handle_hadevelopt(df, df_infer):
+    df = assign_types_for_column(df, df_infer, 'HADEVELOPT')
+    return handle_null_or_valid(df, 'HADEVELOPT')
 
 # I have to process X_COORD_CD and Y_COORD_CD as a whole because processing
 # each individually in this case does not make any sense.
@@ -502,10 +540,3 @@ if __name__ == '__main__':
 
     rows = read_hdfs_csv(sqlContext, dbname)
     rows_infer = read_hdfs_csv(sqlContext, dbname, inferschema=True)
-
-    df = handle_latlong(rows, rows_infer)
-    summarize(df, 'Latitude')
-    summarize(df, 'Longitude')
-    df = handle_coord_cd(rows, rows_infer)
-    summarize(df, 'X_COORD_CD')
-    summarize(df, 'Y_COORD_CD')
