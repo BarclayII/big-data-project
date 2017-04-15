@@ -337,21 +337,37 @@ def handle_pd_desc(df, df_infer):
     return df.join(df_valid, on='CMPLNT_NUM')
 
 def handle_crm_atpt_cptd_cd(df, df_infer):
+    df = assign_types_for_column(df, df_infer, 'CRM_ATPT_CPTD_CD')
     return handle_null_or_valid(df, 'CRM_ATPT_CPTD_CD')
 
 def handle_law_cat_cd(df, df_infer):
+    df = assign_types_for_column(df, df_infer, 'LAW_CAT_CD')
     return handle_null_or_valid(df, 'LAW_CAT_CD')
 
 def handle_juris_desc(df, df_infer):
+    df = assign_types_for_column(df, df_infer, 'JURIS_DESC')
     return handle_null_or_valid(df, 'JURIS_DESC')
 
-def handle_latitude(df, df_infer):
-    return handle_null_or_valid(df, 'Latitude')
+def handle_latlong(df, df_infer):
+    def _valid(r):
+        if isnull(r.Latitude) and isnull(r.Longitude):
+            result = 'NULL'
+        elif isnull(r.Latitude) or isnull(r.Longitude):
+            result = 'INVALID'
+        elif tryfloat(r.Latitude) is None or tryfloat(r.Longitude) is None:
+            result = 'INVALID'
+        else:
+            result = 'VALID'
+        return Row(CMPLNT_NUM=r.CMPLNT_NUM, Latitude_valid=result, Longitude_valid=result)
 
-def handle_longitude(df, df_infer):
-    return handle_null_or_valid(df, 'Longitude')
+    df = assign_types_for_column(df, df_infer, 'Latitude')
+    df = assign_types_for_column(df, df_infer, 'Longitude')
+    df_valid = df.map(_valid).toDF()
+    return df.join(df_valid, on='CMPLNT_NUM')
 
 def handle_addr_pct_cd(df, df_infer):
+    df = assign_types_for_column(df, df_infer, 'ADDR_PCT_CD')
+
     with open('Police Precincts.geojson') as f:
         prec_data = json.load(f)
 
@@ -381,6 +397,8 @@ def handle_addr_pct_cd(df, df_infer):
     return df
 
 def handle_boro_nm(df, df_infer):
+    df = assign_types_for_column(df, df_infer, 'BORO_NM')
+
     with open('Borough Boundaries.geojson') as f:
         boro_data = json.load(f)
 
@@ -392,8 +410,8 @@ def handle_boro_nm(df, df_infer):
         else:
             return 'VALID'
 
-    boro_id = [f['properties']['precinct'] for f in boro_data['features']]
-    boro = fix_polygon(boro_data, lambda prop: prop['precinct'])
+    boro_id = [f['properties']['boro_name'] for f in boro_data['features']]
+    boro = fix_polygon(boro_data, lambda prop: prop['boro_name'].upper())
 
     df_in_boro = df.map(
             lambda r: Row(
@@ -409,6 +427,73 @@ def handle_boro_nm(df, df_infer):
 
     return df
 
+# I have to process X_COORD_CD and Y_COORD_CD as a whole because processing
+# each individually in this case does not make any sense.
+def handle_coord_cd(df, df_infer):
+    NAD83 = pyproj.Proj('''
+        +proj=lcc +lat_1=41.03333333333333 +lat_2=40.66666666666666
+        +lat_0=40.16666666666666 +lon_0=-74 +x_0=300000 +y_0=0
+        +ellps=GRS80 +datum=NAD83 +units=m +no_defs
+        ''')
+    coord = df.map(
+            lambda r:
+            (
+                r.CMPLNT_NUM,
+                (
+                    (float(r.Longitude), float(r.Latitude))
+                    if not (isnull(r.Longitude) or isnull(r.Latitude))
+                    else (None, None)
+                ),(
+                    NAD83(
+                        ft2m(int(r.X_COORD_CD)),
+                        ft2m(int(r.Y_COORD_CD)),
+                        inverse=True
+                        )
+                    if not (isnull(r.X_COORD_CD) or isnull(r.Y_COORD_CD))
+                    else (None, None)
+                ),
+                r.X_COORD_CD,
+                r.Y_COORD_CD,
+                r.Latitude,
+                r.Longitude
+            )
+            )
+    coord_diff = coord.map(
+            lambda r: Row(
+                COORD_DIST=((r[1][0] - r[2][0]) ** 2 + (r[1][1] - r[2][1]) ** 2) ** 0.5
+                    if not (isnull(r[1][0]) or isnull(r[2][0]) or
+                        isnull(r[1][1]) or isnull(r[2][1]))
+                    else None,
+                CMPLNT_NUM=r[0],
+                X_COORD_CD=r[3],
+                Y_COORD_CD=r[4],
+                Latitude=r[5],
+                Longitude=r[6]
+                )
+            )
+    print coord_diff.filter(lambda x: x is None).count()
+    print coord_diff.map(lambda r: r.COORD_DIST).filter(lambda x: x is not None).histogram(50)
+
+    def _valid(r):
+        if isnull(r.X_COORD_CD) and isnull(r.Y_COORD_CD):
+            return 'NULL'
+        elif isnull(r.X_COORD_CD) or isnull(r.Y_COORD_CD):
+            return 'INVALID'
+        elif r.COORD_DIST > 0.01:
+            return 'CONFLICT'
+        else:
+            return 'VALID'
+
+    df = assign_types_for_column(df, df_infer, 'X_COORD_CD')
+    df = assign_types_for_column(df, df_infer, 'Y_COORD_CD')
+    coord_valid = coord_diff.map(lambda r: Row(
+            CMPLNT_NUM=r.CMPLNT_NUM,
+            X_COORD_CD_valid=_valid(r),
+            Y_COORD_CD_valid=_valid(r)
+            )
+            ).toDF()
+    return df.join(coord_valid, on='CMPLNT_NUM')
+
 dbname = 'rows.csv'
 
 if __name__ == '__main__':
@@ -418,4 +503,9 @@ if __name__ == '__main__':
     rows = read_hdfs_csv(sqlContext, dbname)
     rows_infer = read_hdfs_csv(sqlContext, dbname, inferschema=True)
 
-    summarize(handle_addr_pct_cd(rows, rows_infer), 'ADDR_PCT_CD')
+    df = handle_latlong(rows, rows_infer)
+    summarize(df, 'Latitude')
+    summarize(df, 'Longitude')
+    df = handle_coord_cd(rows, rows_infer)
+    summarize(df, 'X_COORD_CD')
+    summarize(df, 'Y_COORD_CD')
