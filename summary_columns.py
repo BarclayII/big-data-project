@@ -229,22 +229,8 @@ def handle_cmplnt_num(df, df_infer):
     df = df.join(df_valid, on='CMPLNT_NUM')
     return df
 
-def handle_cmplnt_fr_dt(df, df_infer):
-    # TODO
-    return df
-
-def handle_cmplnt_fr_tm(df, df_infer):
-    # TODO
-    return df
-
-def handle_cmplnt_to_dt(df, df_infer):
-    # TODO
-    return df
-
-def handle_cmplnt_to_tm(df, df_infer):
-    # TODO
-    return df
-
+# We should treat the from date/time and to date/time as a whole because
+# the validity of from date/time and to date/time depend on each other.
 def handle_cmplnt_time(df, df_infer):
     df = assign_types_for_column(df, df_infer, 'CMPLNT_FR_DT')
     df = assign_types_for_column(df, df_infer, 'CMPLNT_FR_TM')
@@ -252,10 +238,14 @@ def handle_cmplnt_time(df, df_infer):
     df = assign_types_for_column(df, df_infer, 'CMPLNT_TO_TM')
 
     def mapper(r):
-
-        def formatter(key, mask):
-            
-            return (CMPLNT_NUM=key, CMPLNT_FR_DT=frdt, CMPLNT_FR_TM=frtm, CMPLNT_TO_DT=todt, CMPLNT_TO_TM=totm)
+        def formatter(key, frdt, frtm, todt, totm):
+            return Row(
+                    CMPLNT_NUM=key,
+                    CMPLNT_FR_DT_valid=frdt,
+                    CMPLNT_FR_TM_valid=frtm,
+                    CMPLNT_TO_DT_valid=todt,
+                    CMPLNT_TO_TM_valid=totm
+                    )
 
         key = r['CMPLNT_NUM']
         df = str(r['CMPLNT_FR_DT'])
@@ -267,13 +257,13 @@ def handle_cmplnt_time(df, df_infer):
         text_to = dt + " " + tt
 
         mask = 0
-        if df != "" :
+        if not isnull(df):
             mask += 1000
-        if tf != "" :
+        if not isnull(tf):
             mask += 100
-        if dt != "" :
+        if not isnull(dt):
             mask += 10
-        if tt != "" :
+        if not isnull(tt):
             mask += 1
 
         if mask == 1100 :
@@ -285,15 +275,23 @@ def handle_cmplnt_time(df, df_infer):
         else:
             return formatter(key, 'INVALID', 'INVALID', 'INVALID', 'INVALID')
 
-        
+        time_from = None
+        time_to = None
+
         if result != "end-only":
             time_from = datetime_from_string(df, tf)
+            have_time_from = True
+        else:
+            have_time_from = False
         if result != "exact":
             time_to = datetime_from_string(dt, tt)
+            have_time_to = True
+        else:
+            have_time_to = False
         
-        if time_from == None or time_to == None :
+        if (time_from is None and have_time_from) or (time_to is None and have_time_to):
             return formatter(key, 'INVALID', 'INVALID', 'INVALID', 'INVALID')
-        
+
         if result == "period":
             if time_to < time_from:
                 return formatter(key, 'INVALID', 'INVALID', 'INVALID', 'INVALID')
@@ -301,11 +299,11 @@ def handle_cmplnt_time(df, df_infer):
                 result = "exact"
 
         if result == "exact" :
-            return (key, 'VALID', 'VALID', 'NULL', 'NULL')
+            return formatter(key, 'VALID', 'VALID', 'NULL', 'NULL')
         if result == "period" :
-            return (key, 'VALID', 'VALID', 'VALID', 'VALID')
+            return formatter(key, 'VALID', 'VALID', 'VALID', 'VALID')
         if result == "end-only" :
-            return (key, 'NULL', 'NULL', 'VALID', 'VALID')
+            return formatter(key, 'NULL', 'NULL', 'VALID', 'VALID')
 
     datetime_valid = (df
             .select('CMPLNT_NUM', 'CMPLNT_FR_DT', 'CMPLNT_FR_TM', 'CMPLNT_TO_DT', 'CMPLNT_TO_TM')
@@ -620,3 +618,11 @@ if __name__ == '__main__':
 
     rows = read_hdfs_csv(sqlContext, dbname)
     rows_infer = read_hdfs_csv(sqlContext, dbname, inferschema=True)
+
+    rows = handle_cmplnt_time(rows, rows_infer)
+    summarize(rows, 'CMPLNT_FR_DT')
+    summarize(rows, 'CMPLNT_TO_DT')
+    summarize(rows, 'CMPLNT_FR_TM')
+    summarize(rows, 'CMPLNT_TO_TM')
+
+    print rows.rdd.filter(lambda r: r.CMPLNT_FR_DT_valid == 'INVALID').take(5)
