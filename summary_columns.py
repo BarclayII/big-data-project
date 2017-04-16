@@ -245,9 +245,89 @@ def handle_cmplnt_to_tm(df, df_infer):
     # TODO
     return df
 
+def handle_cmplnt_time(df, df_infer):
+    df = assign_types_for_column(df, df_infer, 'CMPLNT_FR_DT')
+    df = assign_types_for_column(df, df_infer, 'CMPLNT_FR_TM')
+    df = assign_types_for_column(df, df_infer, 'CMPLNT_TO_DT')
+    df = assign_types_for_column(df, df_infer, 'CMPLNT_TO_TM')
+
+    def mapper(r):
+
+        def formatter(key, mask):
+            
+            return (CMPLNT_NUM=key, CMPLNT_FR_DT=frdt, CMPLNT_FR_TM=frtm, CMPLNT_TO_DT=todt, CMPLNT_TO_TM=totm)
+
+        key = r['CMPLNT_NUM']
+        df = str(r['CMPLNT_FR_DT'])
+        tf = str(r['CMPLNT_FR_TM'])
+        dt = str(r['CMPLNT_TO_DT'])
+        tt = str(r['CMPLNT_TO_TM'])
+
+        text_from = df + " " + tf
+        text_to = dt + " " + tt
+
+        mask = 0
+        if df != "" :
+            mask += 1000
+        if tf != "" :
+            mask += 100
+        if dt != "" :
+            mask += 10
+        if tt != "" :
+            mask += 1
+
+        if mask == 1100 :
+            result = "exact"
+        elif mask == 1111 :
+            result = "period"
+        elif mask == 0011:
+            result = "end-only"
+        else:
+            return formatter(key, 'INVALID', 'INVALID', 'INVALID', 'INVALID')
+
+        
+        if result != "end-only":
+            time_from = datetime_from_string(df, tf)
+        if result != "exact":
+            time_to = datetime_from_string(dt, tt)
+        
+        if time_from == None or time_to == None :
+            return formatter(key, 'INVALID', 'INVALID', 'INVALID', 'INVALID')
+        
+        if result == "period":
+            if time_to < time_from:
+                return formatter(key, 'INVALID', 'INVALID', 'INVALID', 'INVALID')
+            elif time_from == time_to:
+                result = "exact"
+
+        if result == "exact" :
+            return (key, 'VALID', 'VALID', 'NULL', 'NULL')
+        if result == "period" :
+            return (key, 'VALID', 'VALID', 'VALID', 'VALID')
+        if result == "end-only" :
+            return (key, 'NULL', 'NULL', 'VALID', 'VALID')
+
+    datetime_valid = (df
+            .select('CMPLNT_NUM', 'CMPLNT_FR_DT', 'CMPLNT_FR_TM', 'CMPLNT_TO_DT', 'CMPLNT_TO_TM')
+            .map(mapper)
+            .toDF()
+            )
+
+    return df.join(datetime_valid, on='CMPLNT_NUM')
+
 def handle_rpt_dt(df, df_infer):
-    # TODO
-    return df
+    df = assign_types_for_column(df, df_infer, 'RPT_DT')
+
+    def _valid(s):
+        if isnull(s):
+            return 'NULL'
+        elif date_from_string(s) == None :
+            return 'INVALID'
+        else:
+            return 'VALID'
+
+    valid = udf(_valid, StringType())
+    return df.withColumn('RPT_DT_valid', valid(df.RPT_DT))
 
 def handle_ky_cd(df, df_infer):
     df = assign_types_for_column(df, df_infer, 'KY_CD')
