@@ -75,10 +75,6 @@ def datetime_from_string(date_str, time_str):
     except:
         return None
 
-def check_date_consistency(r):
-    # TODO
-    return False
-
 def fix_polygon(poly_data, poly_key):
     for i, feat in enumerate(poly_data['features']):
         for j, coords in enumerate(feat['geometry']['coordinates']):
@@ -162,6 +158,19 @@ dtypes_dict = {
         }
 
 dbname = 'rows.csv'     # Change to your file name
+
+def dump_info(df, col):
+    with open(col, 'w') as f:
+        df_sel = df.select(col, col + '_dtype', col + '_sem', col + '_valid').map(
+                lambda r: ' '.join([
+                    r[col],
+                    r[col + '_dtype'],
+                    r[col + '_sem'],
+                    r[col + '_valid']
+                    ])
+                ).collect()
+        for l in df_sel:
+            f.write(l + '\n')
 
 def assign_types_for_column(df, df_infer, col_name):
     '''
@@ -618,11 +627,94 @@ if __name__ == '__main__':
 
     rows = read_hdfs_csv(sqlContext, dbname)
     rows_infer = read_hdfs_csv(sqlContext, dbname, inferschema=True)
+    id_ = rows.select('CMPLNT_NUM')
 
-    rows = handle_cmplnt_time(rows, rows_infer)
-    summarize(rows, 'CMPLNT_FR_DT')
-    summarize(rows, 'CMPLNT_TO_DT')
-    summarize(rows, 'CMPLNT_FR_TM')
-    summarize(rows, 'CMPLNT_TO_TM')
+    # CMPLNT_NUM
+    df = handle_cmplnt_num(rows, rows_infer)
+    summarize(df, 'CMPLNT_NUM')
+    dump_info(df, 'CMPLNT_NUM')
+    id_ = id_.intersect(df.where(df.CMPLNT_NUM_valid == 'VALID').select('CMPLNT_NUM'))
 
-    print rows.rdd.filter(lambda r: r.CMPLNT_FR_DT_valid == 'INVALID').take(5)
+    # CMPLNT_FR_DT - CMPLNT_TO_TM
+    df = handle_cmplnt_time(rows, rows_infer)
+    for col in ['CMPLNT_FR_DT', 'CMPLNT_TO_DT', 'CMPLNT_FR_TM', 'CMPLNT_TO_TM']:
+        summarize(df, col)
+        dump_info(df, col)
+        id_ = id_.intersect(df.where(df[col + '_valid'] != 'INVALID').select('CMPLNT_NUM'))
+
+    # RPT_DT
+    df = handle_rpt_dt(rows, rows_infer)
+    summarize(df, 'RPT_DT')
+    dump_info(df, 'RPT_DT')
+    id_ = id_.intersect(df.where(df.RPT_DT_valid != 'INVALID').select('CMPLNT_NUM'))
+
+    # KY_CD
+    df = handle_ky_cd(rows, rows_infer)
+    summarize(df, 'KY_CD')
+    dump_info(df, 'KY_CD')
+
+    # OFNS_DESC
+    df = handle_ofns_desc(rows, rows_infer)
+    summarize(df, 'OFNS_DESC')
+    dump_info(df, 'OFNS_DESC')
+
+    # PD_CD
+    df = handle_pd_cd(rows, rows_infer)
+    summarize(df, 'PD_CD')
+    dump_info(df, 'PD_CD')
+
+    # PD_DESC
+    df = handle_pd_desc(rows, rows_infer)
+    summarize(df, 'PD_DESC')
+    dump_info(df, 'PD_DESC')
+
+    # CRM_ATPT_CPTD_CD
+    df = handle_crm_atpt_cptd_cd(rows, rows_infer)
+    summarize_categories(df, 'CRM_ATPT_CPTD_CD')
+    dump_info(df, 'CRM_ATPT_CPTD_CD')
+
+    # LAW_CAT_CD
+    df = handle_law_cat_cd(rows, rows_infer)
+    summarize_categories(df, 'LAW_CAT_CD')
+    dump_info(df, 'LAW_CAT_CD')
+
+    # JURIS_DESC
+    df = handle_juris_desc(rows, rows_infer)
+    summarize_categories(df, 'JURIS_DESC')
+    dump_info(df, 'JURIS_DESC')
+
+    # Latitude, Longitude, Lat_Lon
+    df = handle_latlong(rows, rows_infer)
+    for col in ['Latitude', 'Longitude', 'Lat_Lon']:
+        summarize(df, col)
+        dump_info(df, col)
+
+    df = handle_addr_pct_cd(rows, rows_infer)
+    summarize(df, 'ADDR_PCT_CD')
+    dump_info(df, 'ADDR_PCT_CD')
+
+    df = handle_boro_nm(rows, rows_infer)
+    summarize_categories(df, 'BORO_NM')
+    dump_info(df, 'BORO_NM')
+
+    df = handle_loc_of_occur_desc(rows, rows_infer)
+    summarize(df, 'LOC_OF_OCCUR_DESC')
+    dump_info(df, 'LOC_OF_OCCUR_DESC')
+
+    df = handle_prem_type_desc(rows, rows_infer)
+    summarize_categories(df, 'PREM_TYPE_DESC')
+    dump_info(df, 'PREM_TYPE_DESC')
+
+    df = handle_parks_nm(rows, rows_infer)
+    summarize_categories(df, 'PARKS_NM')
+    dump_info(df, 'PARKS_NM')
+
+    df = handle_hadevelopt(rows, rows_infer)
+    summarize_categories(df, 'HADEVELOPT')
+    dump_info(df, 'HADEVELOPT')
+
+    df = handle_coord_cd(rows, rows_infer)
+    summarize(df, 'X_COORD_CD')
+    summarize(df, 'Y_COORD_CD')
+    dump_info(df, 'X_COORD_CD')
+    dump_info(df, 'Y_COORD_CD')
