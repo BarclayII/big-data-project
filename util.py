@@ -1,6 +1,8 @@
 '''
 Requires spark-csv to run
 $ pyspark --packages com.databricks:spark-csv_2.11:1.5.0
+
+NOTE: spark-csv 2.11 seems *broken* on dumbo.  Make sure you are using 2.10
 '''
 from pyspark import SparkContext
 from pyspark.storagelevel import StorageLevel
@@ -23,15 +25,15 @@ def init_spark(verbose_logging=False, show_progress=False):
                 )
     return sc, sqlContext
 
-def read_hdfs_csv(sqlContext, filename, header='true', sep=','):
+def read_hdfs_csv(sqlContext, filename, header='true', sep=',', inferschema=False):
     csvreader = (sqlContext
             .read
             .format('com.databricks.spark.csv')
-            .options(header=header, inferschema='true', separator=sep)
+            .options(header=header, inferschema=inferschema, separator=sep)
             )
     return csvreader.load(filename)
 
-def write_hdfs_csv(df, filename, compress=None):
+def write_hdfs_csv(df, filename, compress=None, overwrite=False):
     '''
     Parameters:
         compress: bool
