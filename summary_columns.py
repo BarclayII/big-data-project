@@ -162,6 +162,7 @@ dtypes_dict = {
         }
 
 def dump_info(df, col):
+    return
     with open(col, 'w') as f:
         df_sel = df.select(col, col + '_dtype', col + '_sem', col + '_valid').map(
                 lambda r: ' '.join([
