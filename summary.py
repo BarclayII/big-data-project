@@ -1,25 +1,12 @@
 
 import re
 from pyspark.sql import Row
-from pyspark.sql.functions import lit, udf
-from pyspark.sql.types import StringType, BooleanType
-from util import read_hdfs_csv, init_spark, write_hdfs_csv
+from pyspark.sql.functions import lit
+from util import read_hdfs_csv, init_spark
 import datetime
-import json
-import shapely.geometry as GEO
-import pyproj
-
-def tryfloat(s):
-    try:
-        return float(s)
-    except:
-        return None
 
 def fullmatch(regex, s):
     return re.match(regex + '\\Z', s)
-
-def ft2m(ft):
-    return ft * 0.3048006096012192
 
 def isnull(x):
     return (
@@ -74,7 +61,7 @@ def datetime_from_string(date_str, time_str):
     except:
         return None
 
-def assign_type(df, df_infer):
+def assign_type(df):
     '''
     Insert a '_dtype' field for each column.  The value for each new column
     is the data type inferred from the corresponding column.  All values
@@ -87,7 +74,7 @@ def assign_type(df, df_infer):
             'double': 'DECIMAL',
             'string': 'TEXT'
             }
-    dtypes = dict(df_infer.dtypes)
+    dtypes = dict(df.dtypes)
     cols = df.columns
 
     # Infer if the entire column is date/time, returns an array of bool
@@ -108,110 +95,23 @@ def check_date_consistency(r):
     # TODO
     return False
 
-def fix_polygon(poly_data, poly_key):
-    for i, feat in enumerate(poly_data['features']):
-        for j, coords in enumerate(feat['geometry']['coordinates']):
-            if len(coords) == 1:
-                coords.append([])
-    poly = {poly_key(feat['properties']):
-            GEO.MultiPolygon(feat['geometry']['coordinates'])
-            for feat in poly_data['features']}
-    return poly
-
-def in_polygon(lat, long_, poly_id, poly_dict):
-    lat = tryfloat(lat)
-    long_ = tryfloat(long_)
-    poly = poly_dict.get(poly_id, None)
-
-    if (lat is None) and (long_ is None):
-        point_null = True
-    elif (lat is None) or (long_ is None):
-        point_null = True
-    else:
-        point_null = False
-
-    if isnull(poly_id):
-        poly_valid = 'NULL'
-        poly_null = True
-    else:
-        poly_null = False
-        if point_null:
-            if poly_id in poly_dict:
-                poly_valid = 'VALID'
-            else:
-                poly_valid = 'INVALID'
-
-    if poly_null or point_null:
-        return poly_valid
-
-    point = GEO.Point(long_, lat)
-    poly = poly_dict[poly_id]
-    if poly.contains(point):
-        poly_valid = 'VALID'
-    else:
-        poly_valid = 'CONFLICT'
-    return poly_valid
-
-# The semantics are assigned by manual inspection - because the columns are
-# very clean, and does not have several types of inputs mixed together.
-semantics = {
-        "CMPLNT_NUM": "ID",
-        "CMPLNT_FR_DT": "date (starting from)",
-        "CMPLNT_FR_TM": "time (starting from)",
-        "CMPLNT_TO_DT": "date (ends at)",
-        "CMPLNT_TO_TM": "time (ends at)",
-        "RPT_DT": "date (of report)",
-        "KY_CD": "categorical (key code)",
-        "OFNS_DESC": "description",
-        "PD_CD": "categorical (fine-grained key code)",
-        "PD_DESC": "description",
-        "CRM_ATPT_CPTD_CD": "categorical",
-        "LAW_CAT_CD": "categorical",
-        "JURIS_DESC": "categorical (department)",
-        "BORO_NM": "categorical (borough location)",
-        "ADDR_PCT_CD": "categorical (precinct number)",
-        "LOC_OF_OCCUR_DESC":
-            "categorical (inside/outside/rear of/opposite of/front of)",
-        "PREM_TYP_DESC": "categorical (premise)",
-        "PARKS_NM": "categorical (park name)",
-        "HADEVELOPT": "categorical (housing development)",
-        "X_COORD_CD": "New York Long Island SPCS X-coordinate",
-        "Y_COORD_CD": "New York Long Island SPCS Y-coordinate",
-        "Latitude": "Latitude",
-        "Longitude": "Longitude",
-        "Lat_Lon": "Latitude and Longitude",
-        }
-
-dbname = 'rows.csv'     # Change to your file name
-
 if __name__ == '__main__':
-    sc, sqlContext = init_spark(verbose_logging='INFO')
-    sc.addPyFile('util.py')
+    sc, sqlContext = init_spark(verbose_logging=True)
 
-    udf_isnull = udf(isnull, BooleanType())
+    rows = read_hdfs_csv(sqlContext, 'rows.csv')    # Change to your filename
 
-    rows = read_hdfs_csv(sqlContext, dbname)
-    rows_infer = read_hdfs_csv(sqlContext, dbname, inferschema=True)
-    cols = rows.columns
-
-    # (1) Assign data type for each column
-    rows = assign_type(rows, rows_infer)
-
-    # (2) Assign semantics for each column
-    for c in cols:
-        rows = rows.withColumn(c + '_sem', lit(semantics[c]))
+    # (1) Assign data type for each row
+    rows = assign_type(rows)
 
     # Inconsistency checks:
     # (a) Make sure the IDs are unique:
-    if rows.select('CMPLNT_NUM').distinct().count() != rows.count():
+    if rows.select('CMPLNT_NUM').distinct().count != rows.count():
         # In practice we should print out which ID is not unique, but here we
         # have a very friendly dataset and this block never gets run.
         print 'The ID\'s are not unique'
-    # Mark it valid
-    rows = rows.withColumn('CMPLNT_NUM_valid', lit('VALID'))
 
     # (b) Make sure the TO_ date/time is after FR_ date/time
-    inconsistent_date = rows.rdd.filter(check_date_consistency)
+    inconsistent_date = rows.filter(check_date_consistency)
     inconsistent_date_count = inconsistent_date.count()
     if inconsistent_date_count > 0:
         print 'Number of inconsistent dates:', inconsistent_date_count
@@ -224,32 +124,17 @@ if __name__ == '__main__':
                 .map(lambda r: (r['KY_CD'], [r['OFNS_DESC']]))
                 .reduceByKey(lambda a, b: a + b)
                 .collect())
-    multi_desc_ky = []
     for k, descs in ky_descs:
         descs_not_null = [d for d in descs if not isnull(d)]
         if len(descs_not_null) < len(descs):
             num = (rows
+                   .select('CMPLNT_NUM', 'KY_CD', 'OFNS_DESC')
                    .where((rows['KY_CD'] == k) & (rows['OFNS_DESC'] == ''))
                    .count())
-            num_total = rows.where(rows['KY_CD'] == k).count()
-            print ('Key code %s has empty description in %d records out of %d' %
-                    (k, num, num_total))
+            print 'Key code %03d has empty description in %d records' % (k, num)
         if len(descs_not_null) > 1:
-            print ('Key code %s has multiple descriptions: %s' %
+            print ('Key code %03d has multiple descriptions: %s' %
                    (k, descs_not_null))
-            multi_desc_ky.append(k)
-
-    fill_null = udf(lambda s: 'NULL' if isnull(s) else 'VALID', StringType())
-    fill_null_or_multi = udf(
-            lambda s, k, multi=multi_desc_ky:
-            'NULL' if isnull(s) else (
-                'CONFLICT' if k in multi_desc_ky else 'VALID'
-                )
-            )
-    rows = rows.withColumn('KY_CD_valid', fill_null(rows.KY_CD))
-    rows = rows.withColumn(
-            'OFNS_DESC_valid', fill_null_or_multi(rows.OFNS_DESC, rows.KY_CD)
-            )
 
     # (d) Make sure the mapping between (KY_CD, PD_CD) and PD_DESC are
     # one-to-one
@@ -262,117 +147,12 @@ if __name__ == '__main__':
     for k, descs in pd_descs:
         if len(descs) > 1:
             print '%s has multiple descriptions: %s' % (k, descs)
-        elif isnull(k[1]):
+        elif k[1] is None:
             num = (rows
-                   .where(udf_isnull(rows['PD_CD']))
+                   .select('CMPLNT_NUM', 'KY_CD', 'PD_CD')
+                   .where(rows['PD_CD'].isNull())
                    .count())
-            print ('%d records found with key code %s and no internal code' %
+            print ('%d records found with key code %03d and no internal code' %
                    (num, k[0]))
         elif descs[0] == '':
-            print '%s has empty description' % k[0]
-
-    rows = rows.withColumn('PD_CD_valid', fill_null(rows.PD_CD))
-    rows = rows.withColumn('PD_DESC_valid', fill_null(rows.PD_DESC))
-
-    # (e) Count the number of NULL values in different categorical variables
-    for col in ['CRM_ATPT_CPTD_CD', 'LAW_CAT_CD', 'JURIS_DESC']:
-        num = rows.where(udf_isnull(rows[col])).count()
-        if num > 0:
-            print 'Column %s has %d empty values' % (col, num)
-        distincts = rows.select(col).where(~udf_isnull(rows[col])).distinct().collect()
-        print 'Column %s has distinct values %s' % (col, [d[col] for d in distincts])
-
-    # (f) Check if the precincts are valid
-    with open('Police Precincts.geojson') as f:
-        prec_data = json.load(f)
-
-    prec_id = [f['properties']['precinct'] for f in prec_data['features']]
-    print '%d records has invalid precincts, including %d null precincts' % (
-            rows.where(~rows.ADDR_PCT_CD.isin(prec_id)).count(),
-            rows.where(udf_isnull(rows.ADDR_PCT_CD)).count()
-            )
-
-    prec = fix_polygon(prec_data, lambda prop: prop['precinct'])
-
-    rows_in_prec = rows.map(
-            lambda r: Row(
-                CMPLNT_NUM=r.CMPLNT_NUM,
-                ADDR_PCT_CD_valid=in_polygon(
-                    r.Latitude, r.Longitude, r.ADDR_PCT_CD, prec
-                    )
-                )
-            ).toDF()
-
-    print rows_in_prec.take(5)
-
-    _old_count = rows.count()
-    rows = rows.join(rows_in_prec, on='CMPLNT_NUM')
-    assert rows.count() == _old_count
-
-    print '%d records does not have precinct recorded.' % (
-            rows.where(rows.ADDR_PCT_CD_valid == 'NULL').count()
-            )
-    print '%d records has precincts conflicting the latitude/longitude' % (
-            rows.where(rows.ADDR_PCT_CD_valid == 'CONFLICT').count()
-            )
-
-    # (g) Check if the boroughs are valid
-    with open('Borough Boundaries.geojson') as f:
-        boro_data = json.load(f)
-
-    boro = fix_polygon(boro_data, lambda prop: prop['boro_name'].upper())
-
-    rows_in_boro = rows.map(
-            lambda r: Row(
-                CMPLNT_NUM=r.CMPLNT_NUM,
-                BORO_NM_valid=in_polygon(
-                    r.Latitude, r.Longitude, r.BORO_NM, boro
-                    )
-                )
-            ).toDF()
-
-    print rows_in_boro.take(5)
-    rows = rows.join(rows_in_boro, on='CMPLNT_NUM')
-
-    print '%d records does not have borough recorded.' % (
-            rows.where(rows.BORO_NM_valid == 'NULL').count()
-            )
-    print '%d records has borough conflicting the latitude/longitude' % (
-            rows.where(rows.BORO_NM_valid == 'CONFLICT').count()
-            )
-
-    # (h) Check consistency of different coordinate systems
-    NAD83 = pyproj.Proj('''
-        +proj=lcc +lat_1=41.03333333333333 +lat_2=40.66666666666666
-        +lat_0=40.16666666666666 +lon_0=-74 +x_0=300000 +y_0=0
-        +ellps=GRS80 +datum=NAD83 +units=m +no_defs
-        ''')
-    rows_coord = rows.map(
-            lambda r:
-            (
-                (
-                    (float(r.Longitude), float(r.Latitude))
-                    if not (isnull(r.Longitude) or isnull(r.Latitude))
-                    else (None, None)
-                ),(
-                    NAD83(
-                        ft2m(int(r.X_COORD_CD)),
-                        ft2m(int(r.Y_COORD_CD)),
-                        inverse=True
-                        )
-                    if not (isnull(r.X_COORD_CD) or isnull(r.Y_COORD_CD))
-                    else (None, None)
-                )
-            )
-            )
-    rows_coord_diff = rows_coord.map(
-            lambda r: ((r[0][0] - r[1][0]) ** 2 + (r[0][1] - r[1][1]) ** 2
-                if not (isnull(r[0][0]) or isnull(r[1][0]) or
-                    isnull(r[0][1]) or isnull(r[1][1]))
-                else None)
-            )
-    print rows_coord_diff.filter(lambda x: (x is not None) and (x > 0.01)).count()
-    print rows_coord_diff.filter(lambda x: x is None).count()
-
-    print rows.first()
-    write_hdfs_csv(rows, 'rows-new.csv')
+            print '%s has empty description' % k
