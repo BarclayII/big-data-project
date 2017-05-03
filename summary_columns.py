@@ -8,6 +8,7 @@ import datetime
 import json
 import shapely.geometry as GEO
 import pyproj
+import sys
 
 def tryfloat(s):
     try:
@@ -25,7 +26,6 @@ def isnull(x):
     return (
             x is None or                            # None
             (x == '') or                            # Empty string
-            x.isspace() or                          # Whitespace
             (isinstance(x, str) and x.isspace())    # Whitespace string
             )
 
@@ -39,6 +39,8 @@ def date_from_string(x):
         # (3) datetime.date() requires the integers to form a valid date.
         month, day, year = x.split('/')
         date = datetime.date(int(year), int(month), int(day))
+        if year < 1970:
+            raise ValueError
         return date
     except:         # TODO finer exceptions
         return None
@@ -67,6 +69,8 @@ def datetime_from_string(date_str, time_str):
         month, day, year = [int(_) for _ in date_str.split('/')]
         hour, minute, second = [int(_) for _ in time_str.split(':')]
         date = datetime.date(year, month, day)
+        if year < 1970:
+            raise ValueError
         if (hour == 24) and (minute == 0) and (second == 0):
             hour = 0
             date += datetime.timedelta(1)
@@ -74,10 +78,6 @@ def datetime_from_string(date_str, time_str):
                                  hour, minute, second)
     except:
         return None
-
-def check_date_consistency(r):
-    # TODO
-    return False
 
 def fix_polygon(poly_data, poly_key):
     for i, feat in enumerate(poly_data['features']):
@@ -161,7 +161,19 @@ dtypes_dict = {
         'string': 'TEXT'
         }
 
-dbname = 'rows.csv'     # Change to your file name
+def dump_info(df, col):
+    return
+    with open(col, 'w') as f:
+        df_sel = df.select(col, col + '_dtype', col + '_sem', col + '_valid').map(
+                lambda r: ' '.join([
+                    r[col],
+                    r[col + '_dtype'],
+                    r[col + '_sem'],
+                    r[col + '_valid']
+                    ])
+                ).collect()
+        for l in df_sel:
+            f.write(l + '\n')
 
 def assign_types_for_column(df, df_infer, col_name):
     '''
@@ -229,22 +241,8 @@ def handle_cmplnt_num(df, df_infer):
     df = df.join(df_valid, on='CMPLNT_NUM')
     return df
 
-def handle_cmplnt_fr_dt(df, df_infer):
-    # TODO
-    return df
-
-def handle_cmplnt_fr_tm(df, df_infer):
-    # TODO
-    return df
-
-def handle_cmplnt_to_dt(df, df_infer):
-    # TODO
-    return df
-
-def handle_cmplnt_to_tm(df, df_infer):
-    # TODO
-    return df
-
+# We should treat the from date/time and to date/time as a whole because
+# the validity of from date/time and to date/time depend on each other.
 def handle_cmplnt_time(df, df_infer):
     df = assign_types_for_column(df, df_infer, 'CMPLNT_FR_DT')
     df = assign_types_for_column(df, df_infer, 'CMPLNT_FR_TM')
@@ -252,10 +250,14 @@ def handle_cmplnt_time(df, df_infer):
     df = assign_types_for_column(df, df_infer, 'CMPLNT_TO_TM')
 
     def mapper(r):
-
-        def formatter(key, mask):
-            
-            return (CMPLNT_NUM=key, CMPLNT_FR_DT=frdt, CMPLNT_FR_TM=frtm, CMPLNT_TO_DT=todt, CMPLNT_TO_TM=totm)
+        def formatter(key, frdt, frtm, todt, totm):
+            return Row(
+                    CMPLNT_NUM=key,
+                    CMPLNT_FR_DT_valid=frdt,
+                    CMPLNT_FR_TM_valid=frtm,
+                    CMPLNT_TO_DT_valid=todt,
+                    CMPLNT_TO_TM_valid=totm
+                    )
 
         key = r['CMPLNT_NUM']
         df = str(r['CMPLNT_FR_DT'])
@@ -267,13 +269,13 @@ def handle_cmplnt_time(df, df_infer):
         text_to = dt + " " + tt
 
         mask = 0
-        if df != "" :
+        if not isnull(df):
             mask += 1000
-        if tf != "" :
+        if not isnull(tf):
             mask += 100
-        if dt != "" :
+        if not isnull(dt):
             mask += 10
-        if tt != "" :
+        if not isnull(tt):
             mask += 1
 
         if mask == 1100 :
@@ -285,15 +287,23 @@ def handle_cmplnt_time(df, df_infer):
         else:
             return formatter(key, 'INVALID', 'INVALID', 'INVALID', 'INVALID')
 
-        
+        time_from = None
+        time_to = None
+
         if result != "end-only":
             time_from = datetime_from_string(df, tf)
+            have_time_from = True
+        else:
+            have_time_from = False
         if result != "exact":
             time_to = datetime_from_string(dt, tt)
+            have_time_to = True
+        else:
+            have_time_to = False
         
-        if time_from == None or time_to == None :
+        if (time_from is None and have_time_from) or (time_to is None and have_time_to):
             return formatter(key, 'INVALID', 'INVALID', 'INVALID', 'INVALID')
-        
+
         if result == "period":
             if time_to < time_from:
                 return formatter(key, 'INVALID', 'INVALID', 'INVALID', 'INVALID')
@@ -301,11 +311,11 @@ def handle_cmplnt_time(df, df_infer):
                 result = "exact"
 
         if result == "exact" :
-            return (key, 'VALID', 'VALID', 'NULL', 'NULL')
+            return formatter(key, 'VALID', 'VALID', 'NULL', 'NULL')
         if result == "period" :
-            return (key, 'VALID', 'VALID', 'VALID', 'VALID')
+            return formatter(key, 'VALID', 'VALID', 'VALID', 'VALID')
         if result == "end-only" :
-            return (key, 'NULL', 'NULL', 'VALID', 'VALID')
+            return formatter(key, 'NULL', 'NULL', 'VALID', 'VALID')
 
     datetime_valid = (df
             .select('CMPLNT_NUM', 'CMPLNT_FR_DT', 'CMPLNT_FR_TM', 'CMPLNT_TO_DT', 'CMPLNT_TO_TM')
@@ -614,9 +624,131 @@ def handle_coord_cd(df, df_infer):
 
 dbname = 'rows.csv'
 
+def parse_ints(s):
+    l = s.split(',')
+    r = []
+    for x in l:
+        if x.find('-') != -1:
+            a, b = x.split('-')
+            r.extend(range(int(a), int(b) + 1))
+        else:
+            r.append(int(x))
+    return r
+
 if __name__ == '__main__':
     sc, sqlContext = init_spark()
     sc.addPyFile('util.py')
 
     rows = read_hdfs_csv(sqlContext, dbname)
     rows_infer = read_hdfs_csv(sqlContext, dbname, inferschema=True)
+    id_ = rows.select('CMPLNT_NUM')
+
+    fields = parse_ints(sys.argv[1])
+
+    # CMPLNT_NUM
+    if 1 in fields:
+        df = handle_cmplnt_num(rows, rows_infer)
+        summarize(df, 'CMPLNT_NUM')
+        dump_info(df, 'CMPLNT_NUM')
+        id_ = id_.intersect(df.where(df.CMPLNT_NUM_valid == 'VALID').select('CMPLNT_NUM'))
+
+    # CMPLNT_FR_DT - CMPLNT_TO_TM
+    if 2 in fields:
+        df = handle_cmplnt_time(rows, rows_infer)
+        for col in ['CMPLNT_FR_DT', 'CMPLNT_TO_DT', 'CMPLNT_FR_TM', 'CMPLNT_TO_TM']:
+            summarize(df, col)
+            dump_info(df, col)
+            id_ = id_.intersect(df.where(df[col + '_valid'] != 'INVALID').select('CMPLNT_NUM'))
+
+    # RPT_DT
+    if 3 in fields:
+        df = handle_rpt_dt(rows, rows_infer)
+        summarize(df, 'RPT_DT')
+        dump_info(df, 'RPT_DT')
+        id_ = id_.intersect(df.where(df.RPT_DT_valid != 'INVALID').select('CMPLNT_NUM'))
+
+    # KY_CD
+    if 4 in fields:
+        df = handle_ky_cd(rows, rows_infer)
+        summarize(df, 'KY_CD')
+        dump_info(df, 'KY_CD')
+
+    # OFNS_DESC
+    if 5 in fields:
+        df = handle_ofns_desc(rows, rows_infer)
+        summarize(df, 'OFNS_DESC')
+        dump_info(df, 'OFNS_DESC')
+
+    # PD_CD
+    if 6 in fields:
+        df = handle_pd_cd(rows, rows_infer)
+        summarize(df, 'PD_CD')
+        dump_info(df, 'PD_CD')
+
+    # PD_DESC
+    if 7 in fields:
+        df = handle_pd_desc(rows, rows_infer)
+        summarize(df, 'PD_DESC')
+        dump_info(df, 'PD_DESC')
+
+    # CRM_ATPT_CPTD_CD
+    if 8 in fields:
+        df = handle_crm_atpt_cptd_cd(rows, rows_infer)
+        summarize_categories(df, 'CRM_ATPT_CPTD_CD')
+        dump_info(df, 'CRM_ATPT_CPTD_CD')
+
+    # LAW_CAT_CD
+    if 9 in fields:
+        df = handle_law_cat_cd(rows, rows_infer)
+        summarize_categories(df, 'LAW_CAT_CD')
+        dump_info(df, 'LAW_CAT_CD')
+
+    # JURIS_DESC
+    if 10 in fields:
+        df = handle_juris_desc(rows, rows_infer)
+        summarize_categories(df, 'JURIS_DESC')
+        dump_info(df, 'JURIS_DESC')
+
+    # Latitude, Longitude, Lat_Lon
+    if 11 in fields:
+        df = handle_latlong(rows, rows_infer)
+        for col in ['Latitude', 'Longitude', 'Lat_Lon']:
+            summarize(df, col)
+            dump_info(df, col)
+
+    if 12 in fields:
+        df = handle_addr_pct_cd(rows, rows_infer)
+        summarize(df, 'ADDR_PCT_CD')
+        dump_info(df, 'ADDR_PCT_CD')
+
+    if 13 in fields:
+        df = handle_boro_nm(rows, rows_infer)
+        summarize_categories(df, 'BORO_NM')
+        dump_info(df, 'BORO_NM')
+
+    if 14 in fields:
+        df = handle_loc_of_occur_desc(rows, rows_infer)
+        summarize(df, 'LOC_OF_OCCUR_DESC')
+        dump_info(df, 'LOC_OF_OCCUR_DESC')
+
+    if 15 in fields:
+        df = handle_prem_typ_desc(rows, rows_infer)
+        summarize_categories(df, 'PREM_TYP_DESC')
+        dump_info(df, 'PREM_TYP_DESC')
+
+    if 16 in fields:
+        df = handle_parks_nm(rows, rows_infer)
+        summarize_categories(df, 'PARKS_NM')
+        dump_info(df, 'PARKS_NM')
+
+    if 17 in fields:
+        df = handle_hadevelopt(rows, rows_infer)
+        summarize_categories(df, 'HADEVELOPT')
+        dump_info(df, 'HADEVELOPT')
+
+    if 18 in fields:
+        df = handle_coord_cd(rows, rows_infer)
+        summarize(df, 'X_COORD_CD')
+        summarize(df, 'Y_COORD_CD')
+        dump_info(df, 'X_COORD_CD')
+        dump_info(df, 'Y_COORD_CD')
