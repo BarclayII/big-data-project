@@ -63,7 +63,7 @@ if __name__ == "__main__":
     	df = str(line[1])
         tf = str(line[2])
     	dt = str(line[3])
-	tt = str(line[4])
+		tt = str(line[4])
 
         text_from = df + " " + tf
         text_to = dt + " " + tt
@@ -74,11 +74,11 @@ if __name__ == "__main__":
 	    elif dt == "" and tt == "":
 	        result = "exact"
 	    else:
-                return (key, ("fieldErr", text_from, text_to))
+                return (key, ("fieldErr", text_from, text_to, line[11]))
         elif df == "" and tf == "" and dt != "" and tt != "":
 	    result = "end-only"
-	else:
-	    return (key, ("fieldErr", text_from, text_to))
+	    else:
+	        return (key, ("fieldErr", text_from, text_to, line[11]))
     
         time_from = None
         time_to = None
@@ -98,14 +98,14 @@ if __name__ == "__main__":
                 else:
                     time_to = datetime.strptime(dt+" "+tt, "%m/%d/%Y %H:%M:%S")
         except:
-            return (key, ("parseErr", text_from, text_to))
+            return (key, ("parseErr", text_from, text_to, line[11]))
         if result == "period":
     	    if time_to < time_from:
     	    	result = "periodErr"
             elif time_from == time_to:
                 result = "exact"
 
-        return (key, (result, str(time_from), str(time_to)))
+        return (key, (result, str(time_from), str(time_to), line[11]))
 
     def counter(line):
         return (line[1][0], 1)
@@ -114,7 +114,7 @@ if __name__ == "__main__":
 	    return a+b
 
     def formatter(line):
-	    return '%s\t%s\t%s\t%s' % (line[0], line[1][0], line[1][1], line[1][2])
+	    return '%s\t%s\t%s\t%s\t%s' % (line[0], line[1][0], line[1][1], line[1][2], line[1][3])
 	    
     def formatter2(line):
 	    return '%s\t%d' % (line[0], line[1])
