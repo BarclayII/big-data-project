@@ -1,3 +1,4 @@
+# Use Python 3
 from bs4 import BeautifulSoup
 from urllib.request import urlopen
 from csv import reader
@@ -18,6 +19,7 @@ if len(sys.argv) <= 2 :
 else:
     outputfile = sys.argv[2]    
 f = open(outputfile, 'w')
+f.write('zipcode,median,average,percapita,highincome\n')
 
 count = 0
 fail = 0
@@ -33,9 +35,9 @@ for zipcode in zips:
         fail += 1
         continue
     row = zipcode
-    for gomi in result[0:4]:
-        row += ',' + gomi.td.string.replace('$','').replace(',','').replace('%','')
-    f.write(row)
+    for _ in result[0:4]:
+        row += ',' + _.td.string.replace('$','').replace(',','').replace('%','')
+    f.write(row + '\n')
     print(row)
     count += 1
 

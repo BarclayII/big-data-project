@@ -3,6 +3,7 @@ from polygon import *
 import json
 from util import *
 import shapely.geometry as GEO
+import pyspark.sql.functions as F
 
 sc, sqlContext = init_spark(verbose_logging='INFO')
 sc.addPyFile('polygon.py')
@@ -10,6 +11,7 @@ sc.addPyFile('polygon.py')
 categories = {'FELONY': (0, 0, 1), 'MISDEMEANOR': (0, 1, 0), 'VIOLATION': (1, 0, 0)}
 
 rows = read_hdfs_csv(sqlContext, 'rows.csv')
+rows = rows.where(F.substring(rows.RPT_DT, 7, 4) == '2015')
 rows_latlon = rows.select('LAW_CAT_CD', 'Latitude', 'Longitude').dropna()
 latlon = (
         rows_latlon
@@ -18,10 +20,10 @@ latlon = (
         .map(lambda r: (float(r[0]), float(r[1]), r[2]))
         )
 
-with open('zip.geojson') as f:
+with open('zip-real.json') as f:
     zips = json.load(f)
 
-zips_poly = fix_polygon(zips, lambda p: p['postalCode'])
+zips_poly = fix_polygon(zips, lambda p: p['ZIPCODE'])
 
 zips_count = {}
 for k in zips_poly:
